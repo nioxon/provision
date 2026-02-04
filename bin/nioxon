@@ -39,8 +39,6 @@ case "$1" in
     run 00-system
     run 01-security
     run 02-network-manager
-    run 03-netplan-lan
-    run 04-dns
     run 05-nginx
     run 06-php
     run 07-mysql
@@ -49,6 +47,9 @@ case "$1" in
     run 10-supervisor
     run 11-site
     run 12-ssl
+
+    run 03-netplan-lan
+    run 04-dns
     run 13-captive
     echo ""
     echo "🎉 NIOXON provisioning completed successfully"
