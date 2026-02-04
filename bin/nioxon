@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -e
+
+BASE="/opt/nioxon"
+LOG="$BASE/logs"
+
+mkdir -p "$LOG"
+
+run() {
+  echo "▶ $1"
+  bash "$BASE/provision/$1.sh" | tee -a "$LOG/$1.log"
+}
+
+case "$1" in
+  install)
+        run 00-system
+        run 01-security
+        run 02-nginx
+        run 03-php
+        run 04-mysql
+        run 05-node
+        run 06-redis
+        run 07-supervisor
+        run 08-sites
+        run 09-ssl
+    ;;
+  *)
+    echo "NIOXON Provisioning"
+    echo "Usage: nioxon install"
+    ;;
+esac
