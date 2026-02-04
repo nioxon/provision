@@ -1,224 +1,64 @@
 #!/usr/bin/env bash
 set -e
 
-# ==================================================
-# Paths
-# ==================================================
-BASE_DIR="/opt/nioxon"
-CONFIG_DIR="$BASE_DIR/config"
-PROVISION_DIR="$BASE_DIR/provision"
-RUNTIME_ENV="$CONFIG_DIR/runtime.env"
+echo "🚀 Installing NIOXON CLI"
 
-mkdir -p "$CONFIG_DIR"
+# --------------------------------------------------
+# Requirements
+# --------------------------------------------------
+apt update -y
+apt install -y git curl ca-certificates
 
-# ==================================================
-# UI Helpers
-# ==================================================
-green()  { echo -e "\033[32m$1\033[0m"; }
-red()    { echo -e "\033[31m$1\033[0m"; }
-yellow() { echo -e "\033[33m$1\033[0m"; }
-bold()   { echo -e "\033[1m$1\033[0m"; }
+# --------------------------------------------------
+# Clone or update repo
+# --------------------------------------------------
+if [ ! -d /opt/nioxon ]; then
+  echo "📥 Cloning repository"
+  git clone https://github.com/nioxon/provision.git /opt/nioxon
+else
+  echo "🔄 Updating repository"
+  cd /opt/nioxon
+  git pull
+fi
 
-spinner() {
-  local pid=$1
-  local spin='-\|/'
-  while kill -0 "$pid" 2>/dev/null; do
-    for i in {0..3}; do
-      printf "\r  %s " "${spin:$i:1}"
-      sleep 0.1
-    done
-  done
-  printf "\r"
-}
-
-# ==================================================
-# Internet Check
-# ==================================================
-require_internet() {
-  curl -fsSL https://google.com >/dev/null 2>&1 || {
-    red "❌ Internet not available"
-    echo "👉 Run: nioxon wifi"
-    exit 1
-  }
-}
-
-# ==================================================
-# Hardware Detection
-# ==================================================
-detect_wifi_iface() {
-  nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}'
-}
-
-detect_lan_iface() {
-  nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="ethernet"{print $1; exit}'
-}
-
-# ==================================================
-# Step Runner with Progress
-# ==================================================
-run_step() {
-  local script="$1"
-  local label="$2"
-
-  printf "• %-30s" "$label"
-  bash "$PROVISION_DIR/$script" &
-  spinner $!
-  wait $! && green "✔ Done" || {
-    red "✖ Failed"
-    exit 1
-  }
-}
-
-# ==================================================
-# Commands
-# ==================================================
-
-doctor() {
-  bold "🩺 NIOXON Doctor"
+# --------------------------------------------------
+# HARD GUARANTEE: CLI FILE EXISTS
+# --------------------------------------------------
+if [ ! -f /opt/nioxon/bin/nioxon ]; then
+  echo "❌ ERROR: /opt/nioxon/bin/nioxon not found"
   echo ""
-
-  echo "OS     : $(lsb_release -ds 2>/dev/null || echo Unknown)"
-  echo "Kernel : $(uname -r)"
-  echo "CPU    : $(nproc) cores"
-  echo "Memory : $(free -h | awk '/Mem:/ {print $2}')"
+  echo "Expected repo structure:"
+  echo "  /opt/nioxon/bin/nioxon"
   echo ""
+  echo "Fix:"
+  echo "  • Ensure bin/nioxon is committed to GitHub"
+  echo "  • Ensure you are on branch: main"
+  exit 1
+fi
 
-  LAN=$(detect_lan_iface)
-  WIFI=$(detect_wifi_iface)
+# --------------------------------------------------
+# Make executable
+# --------------------------------------------------
+chmod +x /opt/nioxon/bin/nioxon
 
-  [[ -n "$LAN" ]] && green "✔ LAN  : $LAN" || red "✖ LAN  : Not found"
-  [[ -n "$WIFI" ]] && green "✔ WiFi : $WIFI" || red "✖ WiFi : Not found"
-
-  if curl -fsSL https://google.com >/dev/null 2>&1; then
-    green "✔ Internet : Connected"
-  else
-    yellow "⚠ Internet : Not connected"
-  fi
-}
-
-wifi() {
-  bold "📡 Wi-Fi Setup"
-  WIFI=$(detect_wifi_iface) || true
-
-  [[ -z "$WIFI" ]] && { red "No Wi-Fi adapter found"; exit 1; }
-
-  if nmcli -t -f DEVICE,STATE device | grep "^$WIFI:connected" >/dev/null; then
-    green "✔ Already connected"
-    return
-  fi
-
-  nmcli device wifi list ifname "$WIFI"
-  read -rp "SSID: " SSID
-  read -rsp "Password: " PASS; echo ""
-
-  nmcli device wifi connect "$SSID" password "$PASS" ifname "$WIFI"
-  require_internet
-  green "✔ Internet reachable"
-}
-
-configure() {
-  bold "⚙️  Configuration"
-
-  LAN=$(detect_lan_iface)
-  WIFI=$(detect_wifi_iface)
-
-  read -rp "Project name [nioxon]: " PROJECT_NAME
-  PROJECT_NAME=${PROJECT_NAME:-nioxon}
-
-  read -rp "Domain [nioxplay.local]: " SITE_DOMAIN
-  SITE_DOMAIN=${SITE_DOMAIN:-nioxplay.local}
-
-  read -rp "LAN IP [192.168.1.2]: " LAN_IP
-  LAN_IP=${LAN_IP:-192.168.1.2}
-
-  cat > "$RUNTIME_ENV" <<EOF
-PROJECT_NAME=$PROJECT_NAME
-SITE_DOMAIN=$SITE_DOMAIN
-LAN_IFACE=$LAN
-LAN_IP=$LAN_IP
-LAN_NETMASK=24
-WIFI_IFACE=$WIFI
+# --------------------------------------------------
+# Install GLOBAL launcher (PATH-INDEPENDENT)
+# --------------------------------------------------
+cat > /usr/bin/nioxon <<'EOF'
+#!/usr/bin/env bash
+exec /opt/nioxon/bin/nioxon "$@"
 EOF
 
-  green "✔ Configuration saved"
-}
+chmod +x /usr/bin/nioxon
 
-install() {
-  bold "🚀 Provisioning"
-  [[ ! -f "$RUNTIME_ENV" ]] && { red "Run: nioxon configure"; exit 1; }
+# --------------------------------------------------
+# VERIFY INSTALLATION (MANDATORY)
+# --------------------------------------------------
+if ! /usr/bin/nioxon --help >/dev/null 2>&1; then
+  echo "❌ NIOXON CLI verification failed"
+  exit 1
+fi
 
-  source "$RUNTIME_ENV"
-  require_internet
-
-  bold "🔵 Phase 1 — System"
-  run_step "system.sh" "System packages"
-  run_step "security.sh" "Security"
-  run_step "network_manager.sh" "NetworkManager"
-  run_step "nginx.sh" "Nginx"
-  run_step "php.sh" "PHP"
-  run_step "mysql.sh" "MySQL"
-  run_step "node.sh" "Node.js"
-  run_step "redis.sh" "Redis"
-  run_step "supervisor.sh" "Supervisor"
-
-  bold "⚠ Phase 2 — Captive"
-  run_step "lan_netplan.sh" "LAN IP"
-  run_step "captive_dns.sh" "Captive DNS"
-  run_step "captive_http.sh" "Captive HTTP"
-
-  green "🎉 Done → http://$SITE_DOMAIN"
-}
-
-setup() {
-  bold "🧭 NIOXON Guided Setup"
-  doctor
-  require_internet || wifi
-  configure
-  install
-}
-
-status() {
-  bold "📊 NIOXON Status"
-  echo ""
-
-  systemctl is-active nginx >/dev/null && green "✔ Nginx" || red "✖ Nginx"
-  systemctl is-active redis-server >/dev/null && green "✔ Redis" || red "✖ Redis"
-  systemctl is-active dnsmasq >/dev/null && green "✔ Captive DNS" || red "✖ Captive DNS"
-
-  curl -fsSL https://google.com >/dev/null && green "✔ Internet" || red "✖ Internet"
-}
-
-uninstall() {
-  bold "🧹 NIOXON Uninstall"
-  read -rp "This will remove NIOXON configs. Continue? [y/N]: " CONFIRM
-  [[ "$CONFIRM" != "y" ]] && exit 0
-
-  rm -rf /opt/nioxon
-  rm -f /usr/bin/nioxon
-  green "✔ NIOXON removed"
-}
-
-# ==================================================
-# Router
-# ==================================================
-case "$1" in
-  doctor) doctor ;;
-  wifi) wifi ;;
-  configure) configure ;;
-  install) install ;;
-  setup) setup ;;
-  status) status ;;
-  uninstall|reset) uninstall ;;
-  *)
-    echo "NIOXON CLI"
-    echo ""
-    echo "Commands:"
-    echo "  nioxon setup"
-    echo "  nioxon doctor"
-    echo "  nioxon wifi"
-    echo "  nioxon configure"
-    echo "  nioxon install"
-    echo "  nioxon status"
-    echo "  nioxon uninstall"
-    ;;
-esac
+echo ""
+echo "✔ NIOXON CLI installed successfully"
+echo "👉 Run: nioxon setup"
