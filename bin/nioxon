@@ -1,34 +1,61 @@
 #!/usr/bin/env bash
 set -e
 
-BASE=/opt/nioxon
-LOGS=$BASE/logs
-ENV=$BASE/config/server.env
+BASE_DIR="/opt/nioxon"
+PROVISION_DIR="$BASE_DIR/provision"
 
-mkdir -p "$LOGS"
-source "$ENV"
+# Load configs (fail early if missing)
+if [ ! -f "$BASE_DIR/config/server.env" ]; then
+  echo "❌ Missing config/server.env"
+  exit 1
+fi
+
+if [ ! -f "$BASE_DIR/config/network.env" ]; then
+  echo "❌ Missing config/network.env"
+  exit 1
+fi
+
+source "$BASE_DIR/config/server.env"
+source "$BASE_DIR/config/network.env"
 
 run() {
-  echo "▶ $1"
-  bash "$BASE/provision/$1.sh" | tee -a "$LOGS/$1.log"
+  local STEP="$1"
+  local SCRIPT="$PROVISION_DIR/$STEP.sh"
+
+  if [ ! -f "$SCRIPT" ]; then
+    echo "❌ Provision script not found: $STEP.sh"
+    exit 1
+  fi
+
+  echo ""
+  echo "🚀 Running $STEP"
+  echo "----------------------------------------"
+  bash "$SCRIPT"
+  echo "✅ Completed $STEP"
 }
 
 case "$1" in
   install)
     run 00-system
     run 01-security
-    run 02-nginx
-    run 03-php
-    run 04-mysql
-    run 05-node
-    run 06-redis
-    run 07-supervisor
-    run 08-site
-    run 09-ssl
-    run 10-hotspot
-    run 11-captive-dns
+    run 02-network-manager
+    run 03-netplan-lan
+    run 04-dns
+    run 05-nginx
+    run 06-php
+    run 07-mysql
+    run 08-node
+    run 09-redis
+    run 10-supervisor
+    run 11-site
+    run 12-ssl
+    run 13-captive
+    echo ""
+    echo "🎉 NIOXON provisioning completed successfully"
+    echo "👉 You can now access: http://$SITE_DOMAIN"
     ;;
   *)
-    echo "Usage: nioxon install"
+    echo "Usage:"
+    echo "  sudo nioxon install"
     ;;
 esac
