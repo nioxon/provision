@@ -2,6 +2,14 @@
 set -e
 
 # ==================================================
+# Guard: ensure script is executable correctly
+# ==================================================
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  echo "❌ This script must be executed, not sourced"
+  return 1
+fi
+
+# ==================================================
 # Paths
 # ==================================================
 BASE_DIR="/opt/nioxon"
@@ -20,7 +28,7 @@ yellow() { echo -e "\033[33m$1\033[0m"; }
 bold()   { echo -e "\033[1m$1\033[0m"; }
 
 # ==================================================
-# Safe Internet Check (better than ping)
+# Internet Check (robust)
 # ==================================================
 require_internet() {
   if ! curl -fsSL https://google.com >/dev/null 2>&1; then
@@ -42,7 +50,7 @@ detect_lan_iface() {
 }
 
 # ==================================================
-# Provision Runner (with visible errors)
+# Provision Step Runner (with visible errors)
 # ==================================================
 run_step() {
   local script="$1"
@@ -79,8 +87,8 @@ doctor() {
   LAN_IFACE=$(detect_lan_iface)
   WIFI_IFACE=$(detect_wifi_iface)
 
-  [ -n "$LAN_IFACE" ] && green "✔ LAN Interface : $LAN_IFACE" || red "✖ LAN Interface : Not found"
-  [ -n "$WIFI_IFACE" ] && green "✔ Wi-Fi Adapter : $WIFI_IFACE" || red "✖ Wi-Fi Adapter : Not found"
+  [[ -n "$LAN_IFACE" ]] && green "✔ LAN Interface : $LAN_IFACE" || red "✖ LAN Interface : Not found"
+  [[ -n "$WIFI_IFACE" ]] && green "✔ Wi-Fi Adapter : $WIFI_IFACE" || red "✖ Wi-Fi Adapter : Not found"
 
   if curl -fsSL https://google.com >/dev/null 2>&1; then
     green "✔ Internet      : Connected"
@@ -96,7 +104,7 @@ wifi() {
 
   WIFI_IFACE=$(detect_wifi_iface)
 
-  if [ -z "$WIFI_IFACE" ]; then
+  if [[ -z "$WIFI_IFACE" ]]; then
     red "No Wi-Fi adapter detected"
     exit 1
   fi
@@ -112,8 +120,8 @@ wifi() {
   nmcli device wifi list ifname "$WIFI_IFACE"
   echo ""
 
-  read -p "Enter SSID: " SSID
-  read -s -p "Enter Wi-Fi password: " PASSWORD
+  read -rp "Enter SSID: " SSID
+  read -rsp "Enter Wi-Fi password: " PASSWORD
   echo ""
 
   echo "Connecting..."
@@ -135,22 +143,22 @@ configure() {
   AUTO_LAN=$(detect_lan_iface)
   AUTO_WIFI=$(detect_wifi_iface)
 
-  read -p "Project name [nioxon]: " PROJECT_NAME
+  read -rp "Project name [nioxon]: " PROJECT_NAME
   PROJECT_NAME=${PROJECT_NAME:-nioxon}
 
-  read -p "Domain [nioxplay.local]: " SITE_DOMAIN
+  read -rp "Domain [nioxplay.local]: " SITE_DOMAIN
   SITE_DOMAIN=${SITE_DOMAIN:-nioxplay.local}
 
-  read -p "LAN interface [$AUTO_LAN]: " LAN_IFACE
+  read -rp "LAN interface [$AUTO_LAN]: " LAN_IFACE
   LAN_IFACE=${LAN_IFACE:-$AUTO_LAN}
 
-  read -p "Wi-Fi interface [$AUTO_WIFI]: " WIFI_IFACE
+  read -rp "Wi-Fi interface [$AUTO_WIFI]: " WIFI_IFACE
   WIFI_IFACE=${WIFI_IFACE:-$AUTO_WIFI}
 
-  read -p "LAN IP [192.168.1.2]: " LAN_IP
+  read -rp "LAN IP [192.168.1.2]: " LAN_IP
   LAN_IP=${LAN_IP:-192.168.1.2}
 
-  read -p "LAN subnet [24]: " LAN_NETMASK
+  read -rp "LAN subnet [24]: " LAN_NETMASK
   LAN_NETMASK=${LAN_NETMASK:-24}
 
   cat > "$RUNTIME_ENV" <<EOF
@@ -170,7 +178,7 @@ install() {
   bold "🚀 NIOXON Provisioning"
   echo ""
 
-  if [ ! -f "$RUNTIME_ENV" ]; then
+  if [[ ! -f "$RUNTIME_ENV" ]]; then
     yellow "Configuration not found"
     echo "👉 Run: nioxon configure"
     exit 1
@@ -178,7 +186,6 @@ install() {
 
   source "$RUNTIME_ENV"
 
-  # Safety checks
   require_internet
 
   if ! nmcli -t -f DEVICE,STATE device | grep ":connected" >/dev/null; then
@@ -187,9 +194,9 @@ install() {
     exit 1
   fi
 
-  bold "🔵 Phase 1 — System & Services (Internet required)"
+  bold "🔵 Phase 1 — System & Services"
   run_step "system.sh"           "System packages"
-  run_step "security.sh"         "Security (UFW / SSH)"
+  run_step "security.sh"         "Security"
   run_step "network_manager.sh"  "NetworkManager"
   run_step "nginx.sh"            "Nginx"
   run_step "php.sh"              "PHP"
@@ -199,7 +206,7 @@ install() {
   run_step "supervisor.sh"       "Supervisor"
 
   echo ""
-  yellow "⚠ Phase 2 — LAN & Captive Network (safe offline)"
+  yellow "⚠ Phase 2 — LAN & Captive Network"
 
   run_step "lan_netplan.sh"      "LAN static IP"
   run_step "captive_dns.sh"      "Captive DNS"
@@ -213,18 +220,26 @@ install() {
 # ==================================================
 # Router
 # ==================================================
-case "$1" in
+COMMAND="$1"
+shift || true
+
+case "$COMMAND" in
   doctor)    doctor ;;
   wifi)      wifi ;;
   configure) configure ;;
   install)   install ;;
-  *)
+  ""|-h|--help)
     echo "NIOXON CLI"
     echo ""
     echo "Usage:"
-    echo "  nioxon doctor      # system & hardware checks"
-    echo "  nioxon wifi        # connect Wi-Fi"
-    echo "  nioxon configure   # interactive configuration"
-    echo "  nioxon install     # provision server"
+    echo "  nioxon doctor"
+    echo "  nioxon wifi"
+    echo "  nioxon configure"
+    echo "  nioxon install"
+    ;;
+  *)
+    red "Unknown command: $COMMAND"
+    echo "Run: nioxon --help"
+    exit 1
     ;;
 esac
