@@ -25,6 +25,8 @@ case "$1" in
     run 07-supervisor
     run 08-site
     run 09-ssl
+    run 10-hotspot
+    run 11-captive-dns
     ;;
   *)
     echo "Usage: nioxon install"

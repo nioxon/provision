@@ -1,26 +1,44 @@
 #!/usr/bin/env bash
 set -e
 
-echo "🚀 Installing NIOXON"
+echo "🚀 Installing / Updating NIOXON Provisioning Engine"
 
+# Must run as root
 if [ "$EUID" -ne 0 ]; then
-  echo "❌ Run as root (sudo)"
+  echo "❌ Please run as root (use sudo)"
   exit 1
 fi
 
-apt update
+NIOXON_DIR="/opt/nioxon"
+REPO_URL="https://github.com/nioxon/provision.git"
+BRANCH="main"
+
+echo "📦 Installing base dependencies"
+apt update -y
 apt install -y git curl ca-certificates
 
-if [ ! -d /opt/nioxon ]; then
-  git clone https://github.com/nioxon/provision.git /opt/nioxon
+# Ensure /opt exists
+mkdir -p /opt
+
+if [ -d "$NIOXON_DIR/.git" ]; then
+  echo "🔄 Resetting existing NIOXON installation to GitHub state"
+  cd "$NIOXON_DIR"
+
+  # Hard reset to avoid merge conflicts (SERVER IS DISPOSABLE)
+  git fetch origin
+  git reset --hard "origin/$BRANCH"
 else
-  cd /opt/nioxon && git pull
+  echo "📥 Cloning NIOXON repository"
+  git clone -b "$BRANCH" "$REPO_URL" "$NIOXON_DIR"
 fi
 
-chmod +x /opt/nioxon/bin/nioxon
-chmod +x /opt/nioxon/provision/*.sh
+echo "🔧 Setting permissions"
+chmod +x "$NIOXON_DIR/bin/nioxon"
+chmod +x "$NIOXON_DIR/provision/"*.sh
 
-ln -sf /opt/nioxon/bin/nioxon /usr/local/bin/nioxon
+echo "🔗 Installing global nioxon command"
+ln -sf "$NIOXON_DIR/bin/nioxon" /usr/local/bin/nioxon
 
-echo "✅ NIOXON installed"
-echo "👉 Run: nioxon install"
+echo ""
+echo "✅ NIOXON is installed and synced with GitHub"
+echo "👉 Next step: run 'sudo nioxon install'"
