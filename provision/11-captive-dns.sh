@@ -1,42 +1,22 @@
 #!/usr/bin/env bash
 set -e
-source /opt/nioxon/config/hotspot.env
 source /opt/nioxon/config/server.env
 
-echo "🌐 Setting up DHCP & captive DNS"
+echo "🌍 Configuring Nginx captive redirect"
 
-apt install -y dnsmasq
+CONF="/etc/nginx/sites-available/captive"
 
-systemctl stop dnsmasq || true
-
-# Backup default config once
-if [ ! -f /etc/dnsmasq.conf.orig ]; then
-  mv /etc/dnsmasq.conf /etc/dnsmasq.conf.orig
-fi
-
-cat > /etc/dnsmasq.conf <<EOF
-interface=$WIFI_IFACE
-dhcp-range=$DHCP_START,$DHCP_END,$DHCP_LEASE
-
-# Captive portal DNS (redirect everything)
-address=/#/$HOTSPOT_IP
+cat > "$CONF" <<EOF
+server {
+    listen 80 default_server;
+    server_name _;
+    return 302 http://$SITE_DOMAIN;
+}
 EOF
 
-# Static IP for WiFi
-cat > /etc/netplan/99-hotspot.yaml <<EOF
-network:
-  version: 2
-  renderer: networkd
-  ethernets: {}
-  wifis:
-    $WIFI_IFACE:
-      dhcp4: no
-      addresses:
-        - $HOTSPOT_IP/$HOTSPOT_NETMASK
-EOF
+ln -sf "$CONF" /etc/nginx/sites-enabled/captive
 
-netplan apply
+nginx -t
+systemctl reload nginx
 
-systemctl enable dnsmasq
-systemctl start dnsmasq
-systemctl start hostapd
+echo "✅ Nginx captive redirect enabled"

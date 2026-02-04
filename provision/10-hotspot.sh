@@ -1,29 +1,41 @@
 #!/usr/bin/env bash
 set -e
-source /opt/nioxon/config/hotspot.env
+source /opt/nioxon/config/network.env
 
-echo "📡 Setting up Wi-Fi Hotspot on $WIFI_IFACE"
+echo "🌐 Configuring DNS (dnsmasq captive mode)"
 
-apt install -y hostapd iw
+# Stop systemd-resolved safely
+systemctl stop systemd-resolved || true
+systemctl disable systemd-resolved || true
 
-systemctl stop hostapd || true
+# Remove resolv.conf immutability if exists
+chattr -i /etc/resolv.conf 2>/dev/null || true
 
-# hostapd config
-cat > /etc/hostapd/hostapd.conf <<EOF
-interface=$WIFI_IFACE
-driver=nl80211
-ssid=$HOTSPOT_SSID
-hw_mode=g
-channel=$HOTSPOT_CHANNEL
-ieee80211n=1
-wmm_enabled=1
-auth_algs=1
-ignore_broadcast_ssid=0
-wpa=0
+# Remove symlink or old file
+rm -f /etc/resolv.conf
+
+# Create clean resolv.conf
+cat > /etc/resolv.conf <<EOF
+nameserver 127.0.0.1
 EOF
 
-# bind config
-sed -i 's|#DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/hostapd.conf"|' /etc/default/hostapd
+# Lock it
+chattr +i /etc/resolv.conf
 
-systemctl unmask hostapd
-systemctl enable hostapd
+# Install dnsmasq
+apt install -y dnsmasq
+
+# Write dnsmasq config
+cat > /etc/dnsmasq.d/nioxon.conf <<EOF
+port=53
+listen-address=127.0.0.1,$SERVER_IP
+bind-interfaces
+
+# Captive DNS: redirect ALL domains
+address=/#/$SERVER_IP
+EOF
+
+systemctl restart dnsmasq
+systemctl enable dnsmasq
+
+echo "✅ DNS captive configuration completed"
