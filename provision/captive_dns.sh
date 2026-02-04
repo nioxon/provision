@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-source /opt/nioxon/config/server.env
+source /opt/nioxon/config/runtime.env
 
 cat > /etc/nginx/sites-available/captive <<EOF
 server {
@@ -11,4 +11,5 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/captive /etc/nginx/sites-enabled/captive
-nginx -t && systemctl reload nginx
+nginx -t
+systemctl reload nginx

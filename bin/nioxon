@@ -1,62 +1,211 @@
 #!/usr/bin/env bash
 set -e
 
+# --------------------------------------------------
+# Paths
+# --------------------------------------------------
 BASE_DIR="/opt/nioxon"
+CONFIG_DIR="$BASE_DIR/config"
 PROVISION_DIR="$BASE_DIR/provision"
+RUNTIME_ENV="$CONFIG_DIR/runtime.env"
 
-# Load configs (fail early if missing)
-if [ ! -f "$BASE_DIR/config/server.env" ]; then
-  echo "❌ Missing config/server.env"
-  exit 1
-fi
+mkdir -p "$CONFIG_DIR"
 
-if [ ! -f "$BASE_DIR/config/network.env" ]; then
-  echo "❌ Missing config/network.env"
-  exit 1
-fi
+# --------------------------------------------------
+# UI Helpers
+# --------------------------------------------------
+green()  { echo -e "\033[32m$1\033[0m"; }
+red()    { echo -e "\033[31m$1\033[0m"; }
+yellow() { echo -e "\033[33m$1\033[0m"; }
+bold()   { echo -e "\033[1m$1\033[0m"; }
 
-source "$BASE_DIR/config/server.env"
-source "$BASE_DIR/config/network.env"
+run_step() {
+  local script="$1"
+  local label="$2"
 
-run() {
-  local STEP="$1"
-  local SCRIPT="$PROVISION_DIR/$STEP.sh"
+  printf "• %-28s" "$label"
 
-  if [ ! -f "$SCRIPT" ]; then
-    echo "❌ Provision script not found: $STEP.sh"
+  if bash "$PROVISION_DIR/$script"; then
+    green "✔ Done"
+  else
+    red "✖ Failed"
+    echo ""
+    red "Provisioning stopped at: $script"
+    exit 1
+  fi
+}
+
+require_internet() {
+  if ! ping -c1 8.8.8.8 >/dev/null 2>&1; then
+    red "❌ Internet not available"
+    echo "👉 Run: nioxon wifi"
+    exit 1
+  fi
+}
+
+# --------------------------------------------------
+# Hardware Detection
+# --------------------------------------------------
+detect_wifi_iface() {
+  nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}'
+}
+
+detect_lan_iface() {
+  nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="ethernet"{print $1; exit}'
+}
+
+# --------------------------------------------------
+# Commands
+# --------------------------------------------------
+
+doctor() {
+  bold "🩺 NIOXON Doctor"
+  echo ""
+
+  echo "OS       : $(lsb_release -ds 2>/dev/null || echo Unknown)"
+  echo "Kernel   : $(uname -r)"
+  echo "CPU      : $(nproc) cores"
+  echo "Memory   : $(free -h | awk '/Mem:/ {print $2}')"
+  echo ""
+
+  LAN_IFACE=$(detect_lan_iface)
+  WIFI_IFACE=$(detect_wifi_iface)
+
+  [ -n "$LAN_IFACE" ] && green "✔ LAN Interface : $LAN_IFACE" || red "✖ LAN Interface : Not found"
+  [ -n "$WIFI_IFACE" ] && green "✔ Wi-Fi Adapter : $WIFI_IFACE" || red "✖ Wi-Fi Adapter : Not found"
+
+  if ping -c1 8.8.8.8 >/dev/null 2>&1; then
+    green "✔ Internet     : Connected"
+  else
+    yellow "⚠ Internet     : Not connected"
+    echo "  → Run: nioxon wifi"
+  fi
+}
+
+wifi() {
+  bold "📡 Wi-Fi Setup"
+  echo ""
+
+  WIFI_IFACE=$(detect_wifi_iface)
+
+  if [ -z "$WIFI_IFACE" ]; then
+    red "No Wi-Fi adapter detected"
     exit 1
   fi
 
+  echo "Detected Wi-Fi device: $WIFI_IFACE"
   echo ""
-  echo "🚀 Running $STEP"
-  echo "----------------------------------------"
-  bash "$SCRIPT"
-  echo "✅ Completed $STEP"
+
+  if nmcli -t -f DEVICE,STATE device | grep "^$WIFI_IFACE:connected" >/dev/null; then
+    green "✔ Already connected to Wi-Fi"
+    return
+  fi
+
+  nmcli device wifi list ifname "$WIFI_IFACE"
+  echo ""
+
+  read -p "Enter SSID: " SSID
+  read -s -p "Enter Wi-Fi password: " PASSWORD
+  echo ""
+
+  echo "Connecting…"
+  if nmcli device wifi connect "$SSID" password "$PASSWORD" ifname "$WIFI_IFACE"; then
+    green "✔ Connected to $SSID"
+  else
+    red "✖ Failed to connect"
+    exit 1
+  fi
+
+  require_internet
+  green "✔ Internet reachable"
 }
 
-case "$1" in
-  install)
-    run 00-system
-    run 01-security
-    run 02-network-manager
-    run 05-nginx
-    run 06-php
-    run 07-mysql
-    run 08-node
-    run 09-redis
-    run 10-supervisor
-    run 11-site
-    run 12-ssl
+configure() {
+  bold "⚙️  NIOXON Configuration"
+  echo ""
 
-    run 03-netplan-lan
-    run 04-dns
-    run 13-captive
-    echo ""
-    echo "🎉 NIOXON provisioning completed successfully"
-    echo "👉 You can now access: http://$SITE_DOMAIN"
-    ;;
+  LAN_IFACE=$(detect_lan_iface)
+  WIFI_IFACE=$(detect_wifi_iface)
+
+  read -p "Project name [nioxon]: " PROJECT_NAME
+  PROJECT_NAME=${PROJECT_NAME:-nioxon}
+
+  read -p "Domain [nioxplay.local]: " SITE_DOMAIN
+  SITE_DOMAIN=${SITE_DOMAIN:-nioxplay.local}
+
+  read -p "LAN interface [$LAN_IFACE]: " INPUT_LAN
+  LAN_IFACE=${INPUT_LAN:-$LAN_IFACE}
+
+  read -p "LAN IP [192.168.1.2]: " LAN_IP
+  LAN_IP=${LAN_IP:-192.168.1.2}
+
+  read -p "LAN subnet [24]: " LAN_NETMASK
+  LAN_NETMASK=${LAN_NETMASK:-24}
+
+  cat > "$RUNTIME_ENV" <<EOF
+PROJECT_NAME=$PROJECT_NAME
+SITE_DOMAIN=$SITE_DOMAIN
+LAN_IFACE=$LAN_IFACE
+LAN_IP=$LAN_IP
+LAN_NETMASK=$LAN_NETMASK
+WIFI_IFACE=$WIFI_IFACE
+EOF
+
+  green "✔ Configuration saved to $RUNTIME_ENV"
+}
+
+install() {
+  bold "🚀 NIOXON Provisioning"
+  echo ""
+
+  if [ ! -f "$RUNTIME_ENV" ]; then
+    yellow "Configuration not found"
+    echo "👉 Run: nioxon configure"
+    exit 1
+  fi
+
+  source "$RUNTIME_ENV"
+
+  require_internet
+
+  bold "🔵 Phase 1 — System & Services"
+  run_step "system.sh"           "System packages"
+  run_step "security.sh"         "Security (UFW / SSH)"
+  run_step "network_manager.sh"  "NetworkManager"
+  run_step "nginx.sh"            "Nginx"
+  run_step "php.sh"              "PHP"
+  run_step "mysql.sh"            "MySQL"
+  run_step "node.sh"             "Node.js"
+  run_step "redis.sh"            "Redis"
+  run_step "supervisor.sh"       "Supervisor"
+
+  echo ""
+  yellow "⚠ Phase 2 — LAN & Captive Network (no internet required)"
+
+  run_step "lan_netplan.sh"      "LAN static IP"
+  run_step "captive_dns.sh"      "Captive DNS"
+  run_step "captive_http.sh"     "Captive HTTP redirect"
+
+  echo ""
+  green "🎉 Provisioning completed successfully"
+  echo "👉 Access: http://$SITE_DOMAIN"
+}
+
+# --------------------------------------------------
+# Router
+# --------------------------------------------------
+case "$1" in
+  doctor)    doctor ;;
+  wifi)      wifi ;;
+  configure) configure ;;
+  install)   install ;;
   *)
+    echo "NIOXON CLI"
+    echo ""
     echo "Usage:"
-    echo "  sudo nioxon install"
+    echo "  nioxon doctor      # system & hardware checks"
+    echo "  nioxon wifi        # connect Wi-Fi"
+    echo "  nioxon configure   # interactive configuration"
+    echo "  nioxon install     # provision server"
     ;;
 esac
