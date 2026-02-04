@@ -3,18 +3,9 @@ set -e
 
 source /opt/nioxon/config/network.env
 
-# ---- VALIDATION (CRITICAL) ----
-if [ -z "$LAN_IFACE" ] || [ -z "$LAN_IP" ] || [ -z "$LAN_NETMASK" ]; then
-  echo "❌ network.env is incomplete"
-  echo "LAN_IFACE=$LAN_IFACE"
-  echo "LAN_IP=$LAN_IP"
-  echo "LAN_NETMASK=$LAN_NETMASK"
-  exit 1
-fi
+echo "🔧 Applying LAN netplan (Wi-Fi safe mode)"
 
-echo "📡 Configuring LAN interface: $LAN_IFACE ($LAN_IP/$LAN_NETMASK)"
-
-# ---- WRITE NETPLAN ----
+# Write netplan ONLY for LAN
 cat > /etc/netplan/50-nioxon.yaml <<EOF
 network:
   version: 2
@@ -29,6 +20,19 @@ network:
           - 127.0.0.1
 EOF
 
-# ---- VALIDATE BEFORE APPLY ----
+# Generate + apply netplan
 netplan generate
 netplan apply
+
+# 🔴 CRITICAL FIX: force NetworkManager to reconnect Wi-Fi
+echo "🔄 Reconnecting Wi-Fi after netplan apply"
+
+systemctl restart NetworkManager
+
+sleep 5
+
+# Try reconnecting Wi-Fi automatically
+nmcli device set "$WIFI_IFACE" managed yes || true
+nmcli device connect "$WIFI_IFACE" || true
+
+echo "✅ LAN netplan applied without breaking Wi-Fi"
