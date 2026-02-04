@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-if ! command -v redis-server &>/dev/null; then
-  apt install -y redis-server
-fi
-
+apt install -y redis-server
 systemctl enable redis-server
 systemctl restart redis-server
