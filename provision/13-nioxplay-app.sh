@@ -186,17 +186,3 @@ fi
 php artisan config:cache
 php artisan route:cache || true
 php artisan view:clear
-
-# ==================================================
-# 10. PM2 Queue Worker
-# ==================================================
-echo "▶ Starting PM2 worker"
-
-pm2 delete nioxplay-worker 2>/dev/null || true
-
-pm2 start "php artisan queue:work --sleep=3 --tries=3" \
-  --name nioxplay-worker
-
-pm2 save
-
-echo "✔ NioxPlay app setup completed successfully (USB)"
