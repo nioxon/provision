@@ -186,3 +186,44 @@ fi
 php artisan config:cache
 php artisan route:cache || true
 php artisan view:clear
+
+#!/usr/bin/env bash
+set -e
+
+source /opt/nioxon/config/runtime.env
+
+NGINX_AVAIL="/etc/nginx/sites-available"
+NGINX_ENAB="/etc/nginx/sites-enabled"
+PHP_SOCK="/run/php/php8.3-fpm.sock"
+
+cat > "$NGINX_AVAIL/nioxplay.conf" <<EOF
+server {
+    listen 80;
+    server_name $SITE_DOMAIN;
+
+    root /var/www/nioxplay/current/public;
+    index index.php index.html;
+
+    access_log /var/log/nginx/nioxplay.access.log;
+    error_log  /var/log/nginx/nioxplay.error.log;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass unix:$PHP_SOCK;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+}
+EOF
+
+ln -sf "$NGINX_AVAIL/nioxplay.conf" "$NGINX_ENAB/nioxplay.conf"
+
+nginx -t
+systemctl reload nginx

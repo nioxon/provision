@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -e
-source /opt/nioxon/config/runtime.env
 
-mkdir -p /var/www/captive
-cat > /var/www/captive/index.html <<EOF
+CAPTIVE_ROOT="/var/www/captive"
+NGINX_AVAIL="/etc/nginx/sites-available"
+NGINX_ENAB="/etc/nginx/sites-enabled"
+
+mkdir -p "$CAPTIVE_ROOT"
+
+cat > "$CAPTIVE_ROOT/index.html" <<'EOF'
 <!DOCTYPE html>
 <html>
 <head>
@@ -13,21 +17,26 @@ cat > /var/www/captive/index.html <<EOF
 <body style="font-family:sans-serif;text-align:center">
   <h1>🎬 Welcome to NioxPlay</h1>
   <p>Enjoy local streaming without internet</p>
-  <a href="http://${SITE_DOMAIN}">Continue</a>
+  <a href="http://nioxplay.local">Continue</a>
 </body>
 </html>
 EOF
 
-cat > /etc/nginx/sites-available/captive <<EOF
+cat > "$NGINX_AVAIL/captive.conf" <<'EOF'
 server {
-  listen 80 default_server;
-  server_name _;
-  root /var/www/captive;
-  index index.html;
+    listen 80 default_server;
+    server_name _;
+
+    root /var/www/captive;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/captive /etc/nginx/sites-enabled/captive
-rm -f /etc/nginx/sites-enabled/default
+ln -sf "$NGINX_AVAIL/captive.conf" "$NGINX_ENAB/captive.conf"
+
 nginx -t
 systemctl reload nginx
