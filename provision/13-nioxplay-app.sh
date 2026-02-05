@@ -23,7 +23,7 @@ echo "▶ Setting up NioxPlay Laravel App (USB mode)"
 # Variables
 # ==================================================
 APP_BASE="/var/www/nioxplay"
-APP_DIR="$APP_BASE/current"
+APP_DIR="$APP_BASE"
 
 DB_NAME="nioxplay_db"
 DB_USER="nioxplay_user"
@@ -201,7 +201,7 @@ server {
     listen 80;
     server_name $SITE_DOMAIN;
 
-    root /var/www/nioxplay/current/public;
+    root /var/www/nioxplay/public;
     index index.php index.html;
 
     access_log /var/log/nginx/nioxplay.access.log;

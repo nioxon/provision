@@ -17,7 +17,7 @@ cat > "$CAPTIVE_ROOT/index.html" <<'EOF'
 <body style="font-family:sans-serif;text-align:center">
   <h1>🎬 Welcome to NioxPlay</h1>
   <p>Enjoy local streaming without internet</p>
-  <a href="http://nioxplay.local">Continue</a>
+  <a href="http://nioxplay.portal">Continue</a>
 </body>
 </html>
 EOF
@@ -35,6 +35,9 @@ server {
     }
 }
 EOF
+
+# 🔥 IMPORTANT: remove Ubuntu default site
+rm -f /etc/nginx/sites-enabled/default
 
 ln -sf "$NGINX_AVAIL/captive.conf" "$NGINX_ENAB/captive.conf"
 
