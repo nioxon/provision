@@ -7,10 +7,10 @@ network:
   version: 2
   renderer: networkd
   ethernets:
-    $LAN_IFACE:
-      dhcp4: false
+    ${LAN_IFACE}:
+      dhcp4: no
       addresses:
-        - $LAN_IP/$LAN_NETMASK
+        - ${LAN_IP}/${LAN_NETMASK}
 EOF
 
 netplan generate

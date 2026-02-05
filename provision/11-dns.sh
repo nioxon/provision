@@ -5,16 +5,17 @@ source /opt/nioxon/config/runtime.env
 apt install -y dnsmasq
 
 cat > /etc/dnsmasq.d/nioxon.conf <<EOF
-interface=$LAN_IFACE
+interface=${LAN_IFACE}
 bind-interfaces
-listen-address=$LAN_IP
+listen-address=${LAN_IP}
 
-# upstream DNS for forwarding
+domain-needed
+bogus-priv
+
 server=8.8.8.8
 server=1.1.1.1
 
-# captive redirect
-address=/#/$LAN_IP
+address=/#/${LAN_IP}
 EOF
 
 systemctl restart dnsmasq
