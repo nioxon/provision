@@ -130,19 +130,21 @@ chmod -R 775 storage bootstrap/cache
 # ==================================================
 echo "▶ Preparing database"
 
-mysql -u"$DB_USER" -p"$DB_PASS" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+MYSQL="mysql -u root"
 
-php artisan migrate:status >/dev/null 2>&1 || {
+$MYSQL -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+
+if ! php artisan migrate:status >/dev/null 2>&1; then
   echo "❌ Database connection failed"
   exit 1
-}
+fi
 
 # ==================================================
 # 7. Migrate / Seed / SQL
 # ==================================================
 if [ -f database/init.sql ]; then
   echo "▶ Importing database/init.sql"
-  mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" < database/init.sql
+  $MYSQL "$DB_NAME" < database/init.sql
 else
   echo "▶ Running migrations"
   php artisan migrate --force
