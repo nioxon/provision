@@ -30,23 +30,24 @@ DB_USER="root"
 DB_PASS=""
 
 # ==================================================
-# 0. Detect & mount USB
+# 0. Detect and mount USB PARTITION (FIXED)
 # ==================================================
-echo "🔍 Detecting removable USB device..."
+echo "🔍 Detecting removable USB partition..."
 
-USB_DEV=$(lsblk -rpno NAME,RM | awk '$2==1 {print $1}' | head -n1)
+USB_PART=$(lsblk -rpno NAME,RM,FSTYPE | awk '$2==1 && $3!="" {print $1; exit}')
 
-if [ -z "$USB_DEV" ]; then
-  echo "❌ No removable USB device detected"
+if [ -z "$USB_PART" ]; then
+  echo "❌ No removable USB partition found"
+  lsblk
   exit 1
 fi
 
-echo "✔ USB device detected: $USB_DEV"
+echo "✔ USB partition detected: $USB_PART"
 
-if ! mount | grep -q "$USB_DEV"; then
-  echo "▶ Mounting USB at /mnt/usb"
+if ! mount | grep -q "$USB_PART"; then
+  echo "▶ Mounting USB partition at /mnt/usb"
   mkdir -p /mnt/usb
-  mount "$USB_DEV" /mnt/usb
+  mount "$USB_PART" /mnt/usb
 fi
 
 # ==================================================
@@ -76,7 +77,7 @@ mkdir -p "$APP_DIR"
 
 unzip -oq "$ZIP_FILE" -d "$APP_DIR"
 
-# Fix nested ZIP (nioxplay/nioxplay/*)
+# Fix nested ZIP structure (nioxplay/nioxplay/*)
 if [ -d "$APP_DIR/nioxplay" ] && [ ! -f "$APP_DIR/artisan" ]; then
   echo "ℹ Fixing nested ZIP structure"
   mv "$APP_DIR/nioxplay/"* "$APP_DIR/"
