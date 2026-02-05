@@ -130,7 +130,7 @@ chown -R www-data:www-data "$APP_BASE"
 chmod -R 775 storage bootstrap/cache
 
 # ==================================================
-# 6. Database (CORRECT METHOD)
+# 6. Database (FIXED & COMPATIBLE)
 # ==================================================
 echo "▶ Preparing database"
 
@@ -140,7 +140,8 @@ CREATE DATABASE IF NOT EXISTS $DB_NAME
   COLLATE utf8mb4_unicode_ci;
 
 CREATE USER IF NOT EXISTS '$DB_USER'@'localhost'
-  IDENTIFIED BY '$DB_PASS';
+  IDENTIFIED WITH mysql_native_password
+  BY '$DB_PASS';
 
 GRANT ALL PRIVILEGES ON $DB_NAME.*
   TO '$DB_USER'@'localhost';
@@ -149,13 +150,23 @@ FLUSH PRIVILEGES;
 "
 
 # ==================================================
-# 7. Verify DB connection
+# 7. Verify DB connection (HARD CHECK)
 # ==================================================
+echo "▶ Verifying database access"
+
+if ! mysql -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "SELECT 1;" >/dev/null 2>&1; then
+  echo "❌ MySQL user cannot access database"
+  exit 1
+fi
+
+php artisan config:clear
+
 if ! php artisan migrate:status >/dev/null 2>&1; then
   echo "❌ Laravel database connection failed"
   php artisan migrate:status || true
   exit 1
 fi
+
 
 # ==================================================
 # 8. Migrate / Seed / SQL
