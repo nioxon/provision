@@ -25,12 +25,14 @@ echo "▶ Setting up NioxPlay Laravel App (USB mode)"
 APP_BASE="/var/www/nioxplay"
 APP_DIR="$APP_BASE/current"
 
-DB_NAME="nioxplay"
-DB_USER="root"
-DB_PASS=""
+DB_NAME="nioxplay_db"
+DB_USER="nioxplay_user"
+DB_PASS="niox_play_2190"
+
+MYSQL="mysql -u root"
 
 # ==================================================
-# 0. Detect and mount USB PARTITION (FIXED)
+# 0. Detect & mount USB PARTITION
 # ==================================================
 echo "🔍 Detecting removable USB partition..."
 
@@ -51,7 +53,7 @@ if ! mount | grep -q "$USB_PART"; then
 fi
 
 # ==================================================
-# 1. Locate ZIP
+# 1. Locate nioxplay.zip
 # ==================================================
 echo "🔍 Searching for nioxplay.zip..."
 
@@ -77,7 +79,7 @@ mkdir -p "$APP_DIR"
 
 unzip -oq "$ZIP_FILE" -d "$APP_DIR"
 
-# Fix nested ZIP structure (nioxplay/nioxplay/*)
+# Fix nested ZIP structure
 if [ -d "$APP_DIR/nioxplay" ] && [ ! -f "$APP_DIR/artisan" ]; then
   echo "ℹ Fixing nested ZIP structure"
   mv "$APP_DIR/nioxplay/"* "$APP_DIR/"
@@ -112,6 +114,8 @@ sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASS|" .env
 
 grep -q "^APP_MODE=" .env || echo "APP_MODE=local" >> .env
 
+php artisan config:clear
+
 # ==================================================
 # 4. App key
 # ==================================================
@@ -126,21 +130,35 @@ chown -R www-data:www-data "$APP_BASE"
 chmod -R 775 storage bootstrap/cache
 
 # ==================================================
-# 6. Database
+# 6. Database (CORRECT METHOD)
 # ==================================================
 echo "▶ Preparing database"
 
-MYSQL="mysql -u root"
+$MYSQL -e "
+CREATE DATABASE IF NOT EXISTS $DB_NAME
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
 
-$MYSQL -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+CREATE USER IF NOT EXISTS '$DB_USER'@'localhost'
+  IDENTIFIED BY '$DB_PASS';
 
+GRANT ALL PRIVILEGES ON $DB_NAME.*
+  TO '$DB_USER'@'localhost';
+
+FLUSH PRIVILEGES;
+"
+
+# ==================================================
+# 7. Verify DB connection
+# ==================================================
 if ! php artisan migrate:status >/dev/null 2>&1; then
-  echo "❌ Database connection failed"
+  echo "❌ Laravel database connection failed"
+  php artisan migrate:status || true
   exit 1
 fi
 
 # ==================================================
-# 7. Migrate / Seed / SQL
+# 8. Migrate / Seed / SQL
 # ==================================================
 if [ -f database/init.sql ]; then
   echo "▶ Importing database/init.sql"
@@ -152,15 +170,14 @@ else
 fi
 
 # ==================================================
-# 8. Optimize Laravel
+# 9. Optimize Laravel
 # ==================================================
-php artisan config:clear
 php artisan config:cache
 php artisan route:cache || true
 php artisan view:clear
 
 # ==================================================
-# 9. PM2 Queue Worker
+# 10. PM2 Queue Worker
 # ==================================================
 echo "▶ Starting PM2 worker"
 
