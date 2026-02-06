@@ -1,57 +1,78 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-source /opt/nioxon/config/runtime.env
+# ==================================================
+# Load runtime configuration
+# ==================================================
+RUNTIME_ENV="/opt/nioxon/config/runtime.env"
+[ -f "$RUNTIME_ENV" ] || { echo "❌ runtime.env missing"; exit 1; }
+set -a
+source "$RUNTIME_ENV"
+set +a
 
+echo "▶ Deploying NioxPlay Laravel App"
+
+# ==================================================
+# Variables (LOCKED)
+# ==================================================
 APP_BASE="/var/www/nioxplay"
 APP_DIR="$APP_BASE/current"
-USB_MOUNT="/mnt/usb"
 
 DB_NAME="nioxplay_db"
 DB_USER="nioxplay_user"
 DB_PASS="niox_play_2190"
 
-MYSQL="mysql -u root"
+PHP_BIN="$(command -v php)"
+MYSQL_BIN="$(command -v mysql)"
 
-echo "▶ Deploying Laravel App (offline-safe)"
+# ==================================================
+# Guards
+# ==================================================
+command -v php >/dev/null || { echo "❌ PHP not installed"; exit 1; }
+php -m | grep -q pdo_mysql || { echo "❌ php-mysql missing"; exit 1; }
+systemctl is-active mysql >/dev/null || { echo "❌ MySQL not running"; exit 1; }
 
-# --------------------------------------------------
-# 1. Detect & mount USB (idempotent)
-# --------------------------------------------------
-if ! mount | grep -q "$USB_MOUNT"; then
-  USB_PART=$(lsblk -rpno NAME,RM,FSTYPE | awk '$2==1 && $3!="" {print $1; exit}')
-  [ -n "$USB_PART" ] || { echo "❌ No USB device found"; exit 1; }
+# ==================================================
+# 1. Locate USB ZIP (OFFLINE SAFE)
+# ==================================================
+echo "🔍 Searching for nioxplay.zip on USB"
 
-  mkdir -p "$USB_MOUNT"
-  mount "$USB_PART" "$USB_MOUNT"
-fi
+USB_ZIP="$(find /mnt /media /run/media -type f -iname 'nioxplay.zip' 2>/dev/null | head -n1 || true)"
 
-ZIP_FILE=$(find "$USB_MOUNT" -maxdepth 2 -iname "nioxplay.zip" | head -n1)
-[ -f "$ZIP_FILE" ] || { echo "❌ nioxplay.zip not found on USB"; exit 1; }
+[ -n "$USB_ZIP" ] || {
+  echo "❌ nioxplay.zip not found on USB"
+  echo "Expected file: nioxplay.zip (root of USB)"
+  exit 1
+}
 
-echo "✔ Found app package"
+echo "✔ Found app package: $USB_ZIP"
 
-# --------------------------------------------------
-# 2. Extract app (idempotent)
-# --------------------------------------------------
+# ==================================================
+# 2. Extract Application (IDEMPOTENT)
+# ==================================================
+echo "▶ Extracting application"
+
 mkdir -p "$APP_BASE"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 
-unzip -oq "$ZIP_FILE" -d "$APP_DIR"
+unzip -oq "$USB_ZIP" -d "$APP_DIR"
 
-# Fix nested structure if needed
+# Handle nested zip structure
 if [ -d "$APP_DIR/nioxplay" ] && [ ! -f "$APP_DIR/artisan" ]; then
   mv "$APP_DIR/nioxplay/"* "$APP_DIR/"
   rmdir "$APP_DIR/nioxplay"
 fi
 
-cd "$APP_DIR"
-[ -f artisan ] || { echo "❌ Invalid Laravel package"; exit 1; }
+[ -f "$APP_DIR/artisan" ] || { echo "❌ Invalid Laravel package (artisan missing)"; exit 1; }
 
-# --------------------------------------------------
-# 3. Environment configuration
-# --------------------------------------------------
+cd "$APP_DIR"
+
+# ==================================================
+# 3. Environment Configuration
+# ==================================================
+echo "▶ Configuring environment"
+
 [ -f .env ] || cp .env.example .env
 
 sed -i "s|^APP_NAME=.*|APP_NAME=NioxPlay|" .env
@@ -69,16 +90,20 @@ sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASS|" .env
 grep -q "^APP_MODE=" .env || echo "APP_MODE=local" >> .env
 
 php artisan key:generate --force
+php artisan config:clear
 
-# --------------------------------------------------
+# ==================================================
 # 4. Permissions
-# --------------------------------------------------
+# ==================================================
+echo "▶ Fixing permissions"
+
 chown -R www-data:www-data "$APP_BASE"
+find "$APP_DIR" -type d -exec chmod 755 {} \;
 chmod -R 775 storage bootstrap/cache
 
-# --------------------------------------------------
-# 5. Database setup (CORRECT UBUNTU WAY)
-# --------------------------------------------------
+# ==================================================
+# 5. Database (TCP-ONLY, PRODUCTION SAFE)
+# ==================================================
 echo "▶ Preparing database"
 
 mysql -u root <<SQL
@@ -87,12 +112,10 @@ CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`
   COLLATE utf8mb4_unicode_ci;
 
 CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1'
-  IDENTIFIED WITH mysql_native_password
-  BY '$DB_PASS';
+  IDENTIFIED WITH mysql_native_password BY '$DB_PASS';
 
 CREATE USER IF NOT EXISTS '$DB_USER'@'%'
-  IDENTIFIED WITH mysql_native_password
-  BY '$DB_PASS';
+  IDENTIFIED WITH mysql_native_password BY '$DB_PASS';
 
 GRANT ALL PRIVILEGES ON \`$DB_NAME\`.*
   TO '$DB_USER'@'127.0.0.1';
@@ -103,23 +126,35 @@ GRANT ALL PRIVILEGES ON \`$DB_NAME\`.*
 FLUSH PRIVILEGES;
 SQL
 
+# ==================================================
+# 6. Verify DB Access (HARD CHECK)
+# ==================================================
+php -r '
+new PDO(
+  "mysql:host=127.0.0.1;dbname='"$DB_NAME"'",
+  "'"$DB_USER"'",
+  "'"$DB_PASS"'"
+);
+' || { echo "❌ Database connection failed"; exit 1; }
 
-# --------------------------------------------------
-# 6. Verify DB access
-# --------------------------------------------------
-php artisan migrate:status >/dev/null 2>&1 || {
-  echo "❌ Laravel cannot connect to database"
-  exit 1
-}
-
-# --------------------------------------------------
-# 7. Migrate / seed
-# --------------------------------------------------
+# ==================================================
+# 7. Migrations / Seed
+# ==================================================
 if [ -f database/init.sql ]; then
-  mysql "$DB_NAME" < database/init.sql
+  echo "▶ Importing database/init.sql"
+  mysql -u root "$DB_NAME" < database/init.sql
 else
+  echo "▶ Running migrations"
   php artisan migrate --force
   php artisan db:seed --force 2>/dev/null || true
 fi
 
-echo "✔ Laravel app deployed successfully"
+# ==================================================
+# 8. Optimize Laravel
+# ==================================================
+php artisan config:cache
+php artisan route:cache || true
+php artisan view:clear
+
+
+echo "✔ NioxPlay app deployed successfully"
