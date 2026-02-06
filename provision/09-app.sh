@@ -81,20 +81,28 @@ chmod -R 775 storage bootstrap/cache
 # --------------------------------------------------
 echo "▶ Preparing database"
 
-$MYSQL <<SQL
-CREATE DATABASE IF NOT EXISTS $DB_NAME
+mysql -u root <<SQL
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 
-CREATE USER IF NOT EXISTS '$DB_USER'@'localhost'
+CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1'
   IDENTIFIED WITH mysql_native_password
   BY '$DB_PASS';
 
-GRANT ALL PRIVILEGES ON $DB_NAME.*
-  TO '$DB_USER'@'localhost';
+CREATE USER IF NOT EXISTS '$DB_USER'@'%'
+  IDENTIFIED WITH mysql_native_password
+  BY '$DB_PASS';
+
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.*
+  TO '$DB_USER'@'127.0.0.1';
+
+GRANT ALL PRIVILEGES ON \`$DB_NAME\`.*
+  TO '$DB_USER'@'%';
 
 FLUSH PRIVILEGES;
 SQL
+
 
 # --------------------------------------------------
 # 6. Verify DB access
