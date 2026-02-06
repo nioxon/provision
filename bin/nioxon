@@ -133,6 +133,19 @@ run_step() {
   fi
 }
 
+ensure_nmcli() {
+  if ! command -v nmcli >/dev/null 2>&1; then
+    yellow "⚠ NetworkManager not installed"
+    yellow "Installing NetworkManager…"
+
+    apt update -y
+    apt install -y network-manager
+
+    systemctl enable NetworkManager
+    systemctl restart NetworkManager
+  fi
+}
+
 # ==================================================
 # COMMANDS
 # ==================================================
@@ -143,6 +156,7 @@ setup() {
 }
 
 configure() {
+  ensure_nmcli
   bold "⚙ Configuration"
 
   LAN_IFACE=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="ethernet"{print $1;exit}')
@@ -192,6 +206,7 @@ install() {
 }
 
 doctor() {
+  ensure_nmcli
   bold "🩺 NIOXON Doctor"
 
   FIX_MODE=false
