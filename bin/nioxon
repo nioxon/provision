@@ -1,281 +1,130 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==================================================
-# PATHS
-# ==================================================
-BASE_DIR="/opt/nioxon"
-CONFIG_DIR="$BASE_DIR/config"
-PROVISION_DIR="$BASE_DIR/provision"
-STATE_FILE="$CONFIG_DIR/state.json"
-RUNTIME_ENV="$CONFIG_DIR/runtime.env"
+BASE="/opt/nioxon"
+CFG="$BASE/config"
+PROV="$BASE/provision"
+STATE="$CFG/state.json"
+RUNTIME="$CFG/runtime.env"
 
-mkdir -p "$CONFIG_DIR"
+mkdir -p "$CFG"
+[ -f "$STATE" ] || echo "{}" > "$STATE"
 
-# ==================================================
-# UI HELPERS
-# ==================================================
 green(){ echo -e "\033[32m$1\033[0m"; }
 red(){ echo -e "\033[31m$1\033[0m"; }
 yellow(){ echo -e "\033[33m$1\033[0m"; }
 bold(){ echo -e "\033[1m$1\033[0m"; }
 
-progress() {
-  printf "[%02d/%02d] %-30s" "$1" "$2" "$3"
-}
-
-# ==================================================
-# STATE HANDLING (JSON)
-# ==================================================
-init_state() {
-  [ -f "$STATE_FILE" ] || echo "{}" > "$STATE_FILE"
-}
-
-mark_done() {
-  jq ". + {\"$1\": \"done\"}" "$STATE_FILE" > "$STATE_FILE.tmp"
-  mv "$STATE_FILE.tmp" "$STATE_FILE"
-}
-
-is_done() {
-  jq -e ".\"$1\" == \"done\"" "$STATE_FILE" >/dev/null 2>&1
-}
-
-reset_state() {
-  rm -f "$STATE_FILE"
-}
-
-# ==================================================
-# HARD PREFLIGHT (ABSOLUTE GATE)
-# ==================================================
-preflight() {
-  bold "🔍 Preflight checks"
-
-  [[ "$(lsb_release -cs)" == "jammy" ]] || {
-    red "Unsupported OS (only Ubuntu 22.04)"
-    exit 1
-  }
-
-  timedatectl set-ntp true >/dev/null
-  timedatectl status | grep -q "synchronized: yes" || {
-    red "Time not synchronized"
-    exit 1
-  }
-
-  ip route | grep -q "^default" || {
-    red "No default route"
-    exit 1
-  }
-
-  getent hosts google.com >/dev/null || {
-    red "DNS resolution failed"
-    exit 1
-  }
-
-  curl -fsSL https://github.com >/dev/null || {
-    red "HTTPS unreachable"
-    exit 1
-  }
-
-  green "✔ Preflight OK"
-}
-
-# ==================================================
-# INTERNET AUTO-REPAIR
-# ==================================================
-repair_internet() {
-  yellow "⚠ Repairing internet connectivity"
-
-  pkill dnsmasq || true
-  systemctl disable dnsmasq >/dev/null 2>&1 || true
-
-  rm -f /etc/resolv.conf
-  ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-  systemctl restart systemd-resolved
-
-  iptables -F || true
-  iptables -t nat -F || true
-
-  systemctl restart NetworkManager
-  sleep 3
-
-  curl -fsSL https://github.com >/dev/null || {
-    red "Internet repair failed"
-    exit 1
-  }
-
-  green "✔ Internet restored"
-}
-
-# ==================================================
-# STEP RUNNER (RESUMABLE)
-# ==================================================
-run_step() {
-  local step="$1"
-  local label="$2"
-  local idx="$3"
-  local total="$4"
-
-  init_state
-
-  if is_done "$step"; then
-    yellow "[$idx/$total] $label (skipped)"
-    return
-  fi
-
-  progress "$idx" "$total" "$label"
-  if bash "$PROVISION_DIR/$step.sh" >/dev/null 2>&1; then
-    echo -e " \033[32m✔\033[0m"
-    mark_done "$step"
-  else
-    echo -e " \033[31m✖\033[0m"
-    repair_internet
-    exit 1
-  fi
-}
-
-ensure_nmcli() {
-  if ! command -v nmcli >/dev/null 2>&1; then
-    yellow "⚠ NetworkManager not installed"
-    yellow "Installing NetworkManager…"
-
+ensure_nm() {
+  command -v nmcli >/dev/null || {
     apt update -y
     apt install -y network-manager
-
     systemctl enable NetworkManager
     systemctl restart NetworkManager
+  }
+}
+
+detect_ifaces() {
+  ensure_nm
+  LAN_IFACE=$(nmcli -t -f DEVICE,TYPE d | awk -F: '$2=="ethernet"{print $1;exit}')
+  WIFI_IFACE=$(nmcli -t -f DEVICE,TYPE d | awk -F: '$2=="wifi"{print $1;exit}')
+}
+
+run_step() {
+  local step="$1" label="$2"
+  jq -e ".\"$step\"==\"done\"" "$STATE" >/dev/null 2>&1 && {
+    yellow "✔ $label (skipped)"
+    return
+  }
+  printf "• %-25s" "$label"
+  if bash "$PROV/$step.sh"; then
+    jq ".+{\"$step\":\"done\"}" "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+    green "✔"
+  else
+    red "✖"
+    exit 1
   fi
 }
 
-# ==================================================
-# COMMANDS
-# ==================================================
-setup() {
-  reset_state
-  configure
-  install
+wifi() {
+  ensure_nm
+  detect_ifaces
+  bold "📡 Wi-Fi Setup"
+  nmcli dev wifi list ifname "$WIFI_IFACE"
+  read -p "SSID: " SSID
+  read -s -p "Password: " PASS; echo
+  nmcli dev wifi connect "$SSID" password "$PASS" ifname "$WIFI_IFACE"
 }
 
 configure() {
-  ensure_nmcli
-  bold "⚙ Configuration"
-
-  LAN_IFACE=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="ethernet"{print $1;exit}')
-  WIFI_IFACE=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1;exit}')
-
+  detect_ifaces
   read -p "Domain [nioxplay.portal]: " SITE_DOMAIN
   SITE_DOMAIN=${SITE_DOMAIN:-nioxplay.portal}
 
-  read -p "LAN IP [192.168.1.2]: " LAN_IP
-  LAN_IP=${LAN_IP:-192.168.1.2}
-
-  cat > "$RUNTIME_ENV" <<EOF
+  cat > "$RUNTIME" <<EOF
 SITE_DOMAIN=$SITE_DOMAIN
-LAN_IP=$LAN_IP
 LAN_IFACE=$LAN_IFACE
 WIFI_IFACE=$WIFI_IFACE
+LAN_IP=10.10.10.1
+LAN_NETMASK=24
 EOF
 
-  green "✔ Configuration saved"
+  green "✔ Config saved"
 }
 
 install() {
-  preflight
-  source "$RUNTIME_ENV"
+  source "$RUNTIME"
 
-  bold "🚀 Provisioning started"
+  # Ensure WAN default route
+  ip route | grep -q "default.*$WIFI_IFACE" || {
+    red "WAN (USB Wi-Fi) is not default route"
+    exit 1
+  }
 
-  run_step "00-system"     "System"          1 12
-  run_step "01-security"   "Security"        2 12
-  run_step "02-network"    "NetworkManager"  3 12
-  run_step "03-nginx"      "Nginx"            4 12
-  run_step "04-php"        "PHP"              5 12
-  run_step "05-mysql"      "MySQL"            6 12
-  run_step "06-node"       "Node.js"          7 12
-  run_step "07-redis"      "Redis"            8 12
-  run_step "08-supervisor" "Supervisor"       9 12
+  bold "🚀 Provisioning"
+  run_step 00-system "System"
+  run_step 01-security "Security"
+  run_step 02-network "Network"
+  run_step 03-nginx "Nginx"
+  run_step 04-php "PHP"
+  run_step 05-mysql "MySQL"
+  run_step 06-node "Node"
+  run_step 07-redis "Redis"
+  run_step 08-supervisor "Supervisor"
+  run_step 09-app "Laravel App"
 
-  yellow "⚠ Captive portal will DISABLE internet"
-  read -p "Continue? (y/N): " yn
-  [[ "$yn" == "y" ]] || exit 0
+  yellow "⚠ Enabling captive portal (internet stays on Wi-Fi)"
+  read -p "Continue? (y/N): " yn; [ "$yn" = y ] || exit 0
 
-  run_step "10-lan"        "LAN Netplan"     10 12
-  run_step "11-dns"        "Captive DNS"     11 12
-  run_step "12-captive"    "Captive Portal"  12 12
+  run_step 10-lan "LAN Static IP"
+  run_step 11-dns "Captive DNS"
+  run_step 12-captive "Captive Portal"
 
-  green "🎉 DONE → http://$SITE_DOMAIN"
+  green "🎉 Done → http://$SITE_DOMAIN"
 }
 
 doctor() {
-  ensure_nmcli
-  bold "🩺 NIOXON Doctor"
+  ensure_nm
+  detect_ifaces
 
-  FIX_MODE=false
-  [ "${1:-}" = "--repair" ] && FIX_MODE=true
+  echo "Default Route:"
+  ip route | grep default || red "❌ Missing"
 
-  DEFAULT_ROUTE=false
-  INTERNET=false
-  CAPTIVE=false
+  echo "DNS:"
+  getent hosts google.com >/dev/null && green "✔ OK" || red "❌ Broken"
 
-  ip route | grep -q '^default' && DEFAULT_ROUTE=true
-  curl -fsSL https://github.com >/dev/null && INTERNET=true
-  systemctl is-active dnsmasq >/dev/null && CAPTIVE=true
+  echo "HTTPS:"
+  curl -fsSL https://github.com >/dev/null && green "✔ OK" || red "❌ Blocked"
 
-  if $FIX_MODE; then
-    yellow "⚠ Repair mode enabled"
-
-    pkill dnsmasq || true
-    systemctl disable dnsmasq >/dev/null 2>&1 || true
-
-    rm -f /etc/resolv.conf
-    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-    systemctl restart systemd-resolved
-
-    iptables -F || true
-    iptables -t nat -F || true
-
-    systemctl restart NetworkManager
-    sleep 3
-  fi
-
-  # Re-check after repair
-  ip route | grep -q '^default' && green "✔ Default route" || red "✖ No default route"
-  getent hosts google.com >/dev/null && green "✔ DNS OK" || red "✖ DNS broken"
-  curl -fsSL https://github.com >/dev/null && green "✔ HTTPS OK" || red "✖ HTTPS blocked"
-
-  nginx -t >/dev/null 2>&1 && green "✔ Nginx OK" || red "✖ Nginx broken"
-
-  jq -n \
-    --argjson route "$DEFAULT_ROUTE" \
-    --argjson internet "$INTERNET" \
-    --argjson captive "$CAPTIVE" \
-    '{
-      network: {
-        default_route: $route,
-        internet: $internet
-      },
-      dns: {
-        captive_active: $captive
-      },
-      timestamp: now | todate
-    }' > "$CONFIG_DIR/doctor.json"
-
-  echo "📄 Report saved → $CONFIG_DIR/doctor.json"
+  echo "Nginx:"
+  nginx -t >/dev/null && green "✔ OK" || red "❌ Broken"
 }
 
-
-# ==================================================
-# ROUTER
-# ==================================================
 case "${1:-}" in
-  setup) setup ;;
+  setup) configure && install ;;
+  wifi) wifi ;;
   configure) configure ;;
   install) install ;;
   doctor) doctor ;;
-  *)
-    echo "NIOXON CLI"
-    echo "  nioxon setup"
-    echo "  nioxon configure"
-    echo "  nioxon install"
-    echo "  nioxon doctor"
-    ;;
+  *) echo "nioxon setup | wifi | doctor" ;;
 esac
