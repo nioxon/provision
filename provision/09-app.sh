@@ -152,6 +152,7 @@ fi
 # ==================================================
 # 8. Optimize Laravel
 # ==================================================
+composer install
 php artisan config:cache
 php artisan route:cache || true
 php artisan view:clear
