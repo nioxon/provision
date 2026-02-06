@@ -35,17 +35,47 @@ systemctl is-active mysql >/dev/null || { echo "❌ MySQL not running"; exit 1; 
 # ==================================================
 # 1. Locate USB ZIP (OFFLINE SAFE)
 # ==================================================
+echo "🔍 Detecting USB device"
+
+USB_PART=$(lsblk -rpno NAME,TRAN,FSTYPE | awk '$2=="usb" && $3!="" {print $1; exit}')
+
+if [ -z "$USB_PART" ]; then
+  echo "❌ No USB storage device detected"
+  lsblk
+  exit 1
+fi
+
+echo "✔ USB device: $USB_PART"
+
+USB_MOUNT="/mnt/usb"
+
+if ! mount | grep -q "$USB_PART"; then
+  echo "▶ Mounting USB to $USB_MOUNT"
+  mkdir -p "$USB_MOUNT"
+  mount "$USB_PART" "$USB_MOUNT" || {
+    echo "❌ Failed to mount USB"
+    exit 1
+  }
+else
+  USB_MOUNT=$(findmnt -n -o TARGET "$USB_PART")
+fi
+
+echo "✔ USB mounted at $USB_MOUNT"
+
 echo "🔍 Searching for nioxplay.zip on USB"
 
-USB_ZIP="$(find /mnt /media /run/media -type f -iname 'nioxplay.zip' 2>/dev/null | head -n1 || true)"
+#USB_ZIP="$(find /mnt /media /run/media -type f -iname 'nioxplay.zip' 2>/dev/null | head -n1 || true)"
+USB_ZIP=$(find "$USB_MOUNT" -maxdepth 2 -type f -iname "*.zip" | grep -i nioxplay | head -n1)
 
-[ -n "$USB_ZIP" ] || {
-  echo "❌ nioxplay.zip not found on USB"
-  echo "Expected file: nioxplay.zip (root of USB)"
+
+if [ -z "$USB_ZIP" ]; then
+  echo "❌ nioxplay ZIP not found"
+  echo "Files on USB:"
+  find "$USB_MOUNT" -maxdepth 2 -type f
   exit 1
-}
+fi
 
-echo "✔ Found app package: $USB_ZIP"
+echo "✔ Found ZIP: $USB_ZIP"
 
 # ==================================================
 # 2. Extract Application (IDEMPOTENT)
