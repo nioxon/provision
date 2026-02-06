@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -e
-apt install -y mysql-server
+
+dpkg -s mysql-server >/dev/null 2>&1 || apt install -y mysql-server
+
 systemctl enable mysql
-systemctl start mysql
+systemctl restart mysql

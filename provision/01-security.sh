@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -e
 
-apt install -y ufw openssh-server
+apt install -y ufw
 
-ufw allow ssh
-ufw allow 80
-ufw allow 443
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+
 ufw --force enable

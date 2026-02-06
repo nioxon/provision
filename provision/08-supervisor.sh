@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -e
-apt install -y supervisor
+
+dpkg -s supervisor >/dev/null 2>&1 || apt install -y supervisor
+
 systemctl enable supervisor
-systemctl start supervisor
+systemctl restart supervisor
