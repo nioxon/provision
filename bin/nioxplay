@@ -1,0 +1,19 @@
+#!/bin/bash
+
+case "$1" in
+  provision)
+    bash core/provision.sh
+    ;;
+  site:create)
+    bash core/site-create.sh
+    ;;
+  captive:install)
+    bash core/captive-install.sh
+    ;;
+  *)
+    echo "Usage:"
+    echo "  nioxplay provision"
+    echo "  nioxplay site:create"
+    echo "  nioxplay captive:install"
+    ;;
+esac
